@@ -17,6 +17,47 @@ Pattern for organizing multi-service projects with Docker containerization, envi
 - Implementing multi-stage testing (unit → service → integration)
 - Need parallel test execution across git branches
 
+## Single-Service Projects
+
+For projects with only one service, simplify the patterns:
+
+**Directory structure** - Flatten by removing `services/` layer:
+```
+project/
+├── src/                    # Source code (not services/api/src/)
+├── tests/
+│   ├── unit/
+│   └── integration/
+├── deploy/
+│   ├── dev/
+│   ├── test/
+│   └── prod/
+├── Dockerfile
+└── Makefile
+```
+
+**Testing stages** - Collapse to 2 stages (skip service tests):
+```
+┌─────────────┐     ┌─────────────────┐
+│ Unit Tests  │ ──► │Integration Tests│
+│ (no Docker) │     │  (with Docker)  │
+└─────────────┘     └─────────────────┘
+```
+
+Service tests exist to validate individual services before full-stack integration. With one service, integration tests serve this purpose directly.
+
+**CI/CD** - Remove matrix strategy (single build target):
+```yaml
+build:
+  steps:
+    - run: docker build -t myapp:$VERSION .
+```
+
+**When to use multi-service structure anyway:**
+- Service will likely split into multiple services later
+- You want consistency with other multi-service projects
+- The "service" is actually multiple containers (app + worker + scheduler)
+
 ## Directory Structure
 
 ```
