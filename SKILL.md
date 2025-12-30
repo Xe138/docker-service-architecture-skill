@@ -72,7 +72,6 @@ project/
 - **Location**: `services/<name>/tests/unit/`
 - **Dependencies**: All mocked
 - **Containers**: None
-- **Speed**: Seconds
 
 ### Stage 2: Service Tests
 
@@ -80,7 +79,6 @@ project/
 - **Config**: `services/<name>/deploy/test/docker-compose.yml`
 - **Dependencies**: Real database, mocked external APIs
 - **Containers**: Service + its direct dependencies only
-- **Speed**: 30-60 seconds per service
 
 ### Stage 3: Integration Tests
 
@@ -88,7 +86,24 @@ project/
 - **Config**: `deploy/test/docker-compose.yml`
 - **Dependencies**: All services running
 - **Containers**: Full stack
-- **Speed**: 1-3 minutes
+
+### Test Performance Optimization
+
+**Requirement**: Minimize total test execution time. Slow tests waste developer time and CI resources.
+
+- **Time all tests**: Use pytest's `--durations=10` to identify slowest tests
+- **Investigate outliers**: Tests taking >1s in unit tests or >5s in integration tests need review
+- **Common culprit**: Tests waiting for timeouts instead of using condition-based assertions
+  ```python
+  # BAD: Waits full 5 seconds even if ready immediately
+  await asyncio.sleep(5)
+  assert result.is_ready()
+
+  # GOOD: Returns as soon as condition is met
+  await wait_for(lambda: result.is_ready(), timeout=5)
+  ```
+- **Cache expensive setup**: Use `pytest` fixtures with appropriate scope (`module`, `session`)
+- **Parallelize**: Use `pytest-xdist` for CPU-bound test suites
 
 ## Test Environment Isolation
 
