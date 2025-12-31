@@ -192,6 +192,59 @@ export TEST_API_URL="http://localhost:${API_PORT}"
 export TEST_DATABASE_URL="postgresql://test:test@localhost:${DB_PORT}/testdb"
 ```
 
+### Git Worktree Isolation
+
+When using git worktrees for parallel feature development, additional isolation is required beyond container and network naming.
+
+**Problem**: Without `COMPOSE_PROJECT_NAME`, Docker Compose uses the directory name as the project name. Since all test directories are typically named `test`, all worktrees share the same image names (e.g., `test-price-db:latest`). When worktree A builds while worktree B is testing, B's containers can fail due to image conflicts.
+
+**Solution**: Set `COMPOSE_PROJECT_NAME` to include the instance ID:
+
+```bash
+# scripts/test-service.sh
+TEST_INSTANCE_ID=$(./scripts/get-test-instance-id.sh)
+export TEST_INSTANCE_ID
+
+# CRITICAL: Isolate Docker images between worktrees
+# Without this, all worktrees share image names like "test-price-db:latest"
+export COMPOSE_PROJECT_NAME="test-${TEST_INSTANCE_ID}"
+
+cd "services/${SERVICE}/deploy/test"
+docker compose up -d --build --wait
+```
+
+**Result**: Each worktree gets unique image names:
+- `test-feature-auth-price-db:latest` (worktree on feature/auth)
+- `test-feature-api-price-db:latest` (worktree on feature/api)
+- `test-main-price-db:latest` (main branch)
+
+**What gets isolated with full implementation**:
+
+| Resource | Isolation Variable | Example |
+|----------|-------------------|---------|
+| Container names | `container_name: mydb-test-${TEST_INSTANCE_ID}` | `mydb-test-feature-auth` |
+| Network names | `name: myproject-test-${TEST_INSTANCE_ID}` | `myproject-test-feature-auth` |
+| Image names | `COMPOSE_PROJECT_NAME=test-${TEST_INSTANCE_ID}` | `test-feature-auth-mydb:latest` |
+
+### Cleanup Command Scoping
+
+**Problem**: A global `test-clean-all` command that removes all containers matching `name=test-` will interfere with tests running in other worktrees.
+
+**Solution**: Scope cleanup to the current branch's instance ID:
+
+```makefile
+# BAD: Removes ALL test containers across all branches
+test-clean-all:
+	@docker ps -a --filter "name=test-" --format "{{.Names}}" | xargs -r docker rm -f
+
+# GOOD: Only removes containers for current branch
+test-clean-all:
+	@TEST_INSTANCE_ID=$$(./scripts/get-test-instance-id.sh); \
+	echo "Cleaning up test containers for instance: $$TEST_INSTANCE_ID..."; \
+	docker ps -a --filter "name=test-$$TEST_INSTANCE_ID" --format "{{.Names}}" | xargs -r docker rm -f 2>/dev/null || true; \
+	docker network rm "myproject-test-network-$$TEST_INSTANCE_ID" 2>/dev/null || true
+```
+
 ## Docker Compose Patterns
 
 ### Development Environment
@@ -416,6 +469,8 @@ test-infra-down:
 | Verbose test output | Context exhaustion | Use rich progress display, details only on failure |
 | Single test stage | Slow feedback, hard to debug | Separate unit → service → integration |
 | No branch isolation | Concurrent branches conflict | Use `TEST_INSTANCE_ID` from git branch |
+| No `COMPOSE_PROJECT_NAME` | Worktrees share images, builds conflict | Set `COMPOSE_PROJECT_NAME=test-${TEST_INSTANCE_ID}` |
+| Global test cleanup | Kills tests in other worktrees | Scope cleanup to current `TEST_INSTANCE_ID` |
 | Building all services on every change | Slow CI | Use matrix strategy, only build changed services |
 
 ## Quick Reference
@@ -439,6 +494,9 @@ set -e
 SERVICE=$1
 TEST_INSTANCE_ID=$(./scripts/get-test-instance-id.sh)
 export TEST_INSTANCE_ID
+
+# CRITICAL: Isolate Docker images between worktrees
+export COMPOSE_PROJECT_NAME="test-${TEST_INSTANCE_ID}"
 
 # Start service-specific containers
 cd "services/${SERVICE}/deploy/test"
